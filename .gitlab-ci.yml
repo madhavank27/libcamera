@@ -6,6 +6,7 @@ build:
     - apk add --no-cache gcc g++ musl-dev meson py3-sphinx linux-headers
   script:
     - mkdir libcamera && cd libcamera && meson .. && ninja
+    - ninja Documentation/linkcheck
     - DESTDIR=$PWD/package ninja install
   artifacts:
     expire_in: 6 hrs
