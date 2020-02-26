@@ -54,6 +54,64 @@ LOG_DEFINE_CATEGORY(Buffer)
  * FrameMetadata::Plane structure stores per-plane metadata.
  */
 
+Plane::Plane()
+        : fd_(-1), length_(0), mem_(0)
+{
+}
+
+Plane::~Plane()
+{
+        munmap();
+
+        if (fd_ != -1)
+                close(fd_);
+}
+
+int Plane::setDmabuf(int fd, unsigned int length)
+{
+        if (fd < 0) {
+                LOG(Buffer, Error) << "Invalid dmabuf fd provided";
+                return -EINVAL;
+        }
+
+        if (fd_ != -1) {
+                close(fd_);
+                fd_ = -1;
+        }
+
+        fd_ = dup(fd); 
+        if (fd_ == -1) {
+                int ret = -errno;
+                LOG(Buffer, Error)
+                        << "Failed to duplicate dmabuf: " << strerror(-ret);
+                return ret;
+        }
+
+        length_ = length;
+
+        return 0;
+}
+
+int Plane::munmap()
+{
+        int ret = 0;
+
+        if (mem_)
+                ret = ::munmap(mem_, length_);
+
+        if (ret) {
+                ret = -errno;
+                LOG(Buffer, Warning)
+                        << "Failed to unmap plane: " << strerror(-ret);
+        } else {
+                mem_ = 0;
+        }
+
+        return ret;
+}
+
+
+
 /**
  * \var FrameMetadata::Plane::bytesused
  * \brief Number of bytes occupied by the data in the plane, including line
@@ -71,6 +129,32 @@ LOG_DEFINE_CATEGORY(Buffer)
  * The validity of other fields of the FrameMetadata structure depends on the
  * status value.
  */
+
+FrameBuffer::FrameBuffer(unsigned int index, const FrameBuffer *metadata)
+        : index_(index), dmabuf_({ -1, -1, -1 }),
+          status_(FrameBuffer::BufferSuccess), request_(nullptr),
+          stream_(nullptr)
+{
+        if (metadata) {
+                bytesused_ = metadata->bytesused_;
+                sequence_ = metadata->sequence_;
+                timestamp_ = metadata->timestamp_;
+        } else {
+                bytesused_ = 0;
+                sequence_ = 0;
+                timestamp_ = 0;
+        }
+}
+
+void FrameBuffer::cancel()
+{
+        bytesused_ = 0;
+        timestamp_ = 0;
+        sequence_ = 0;
+        status_ = BufferCancelled;
+}
+
+
 
 /**
  * \var FrameMetadata::sequence

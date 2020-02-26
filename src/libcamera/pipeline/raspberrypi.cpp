@@ -25,26 +25,25 @@ namespace libcamera {
 
 LOG_DEFINE_CATEGORY(RPI)
 
+
 class RPiCameraData : public CameraData
 {
 public:
+
 	RPiCameraData(PipelineHandler *pipe)
 		: CameraData(pipe), sensor_(nullptr), unicam_(nullptr),
-		  isp_(nullptr)
-	{
-	}
+                  isp_(nullptr)
+        {
+        }
 
-	~RPiCameraData()
-	{
-		bayerBuffers_.destroyBuffers();
-		delete sensor_;
-		delete unicam_;
-		delete isp_;
-	}
+        ~RPiCameraData()
+        {
+                delete sensor_;
+        }
 
-	void sensorReady(Buffer *buffer);
-	void ispOutputReady(Buffer *buffer);
-	void ispCaptureReady(Buffer *buffer);
+	void sensorReady(FrameBuffer *buffer);
+	void ispOutputReady(FrameBuffer *buffer);
+	void ispCaptureReady(FrameBuffer *buffer);
 
 	int loadIPA();
 	void queueFrameAction(unsigned int frame,
@@ -58,7 +57,7 @@ public:
 	Stream stream_;
 
 	BufferPool bayerBuffers_;
-	std::vector<std::unique_ptr<Buffer>> rawBuffers_;
+	std::vector<std::unique_ptr<FrameBuffer>> rawBuffers_;
 };
 
 class RPiCameraConfiguration : public CameraConfiguration
@@ -81,15 +80,15 @@ public:
 	int configure(Camera *camera,
 		      CameraConfiguration *config) override;
 
-	int allocateBuffers(Camera *camera,
-			    const std::set<Stream *> &streams) override;
-	int freeBuffers(Camera *camera,
-			const std::set<Stream *> &streams) override;
+	int exportFrameBuffers(Camera *camera, Stream *stream,
+			       std::vector<std::unique_ptr<FrameBuffer>> *buffers) override;
+	int importFrameBuffers(Camera *camera, Stream *stream) override;
+	void freeFrameBuffers(Camera *camera, Stream *stream) override;
 
 	int start(Camera *camera) override;
 	void stop(Camera *camera) override;
 
-	int queueRequest(Camera *camera, Request *request) override;
+	int queueRequestDevice(Camera *camera, Request *request) override;
 
 	bool match(DeviceEnumerator *enumerator) override;
 
@@ -145,6 +144,22 @@ PipelineHandlerRPi::~PipelineHandlerRPi()
 		codec_->release();
 }
 
+BufferPool::~BufferPool()
+{
+        destroyBuffers();
+}
+
+void BufferPool::createBuffers(unsigned int count)
+{
+        buffers_.resize(count);
+}
+
+void BufferPool::destroyBuffers()
+{
+        buffers_.resize(0);
+}
+
+
 CameraConfiguration *
 PipelineHandlerRPi::generateConfiguration(Camera *camera,
 					  const StreamRoles &roles)
@@ -160,6 +175,8 @@ PipelineHandlerRPi::generateConfiguration(Camera *camera,
 	cfg.size = { 1920, 1080 };
 
 	LOG(RPI, Debug) << "Sensor Resolution is: " << data->sensor_->resolution().toString();
+
+	cfg.size = { 320, 240 };
 
 	cfg.bufferCount = 4;
 
@@ -229,12 +246,12 @@ int PipelineHandlerRPi::configure(Camera *camera, CameraConfiguration *config)
 	return 0;
 }
 
-int PipelineHandlerRPi::allocateBuffers(Camera *camera,
-					const std::set<Stream *> &streams)
+int PipelineHandlerRPi::exportFrameBuffers(Camera *camera, Stream *streams,
+                                              std::vector<std::unique_ptr<FrameBuffer>> *buffers)
 {
 	RPiCameraData *data = cameraData(camera);
-	Stream *stream = *streams.begin();
-	const StreamConfiguration &cfg = stream->configuration();
+//	Stream *stream = streams->begin();
+	const StreamConfiguration &cfg = streams->configuration();
 	int ret;
 
 	/*
@@ -254,37 +271,87 @@ int PipelineHandlerRPi::allocateBuffers(Camera *camera,
 	if (ret)
 		return ret;
 
-	/* Tie the stream buffers to the capture device of the ISP. */
-	if (stream->memoryType() == InternalMemory)
-		ret = data->isp_->capture()->exportBuffers(&stream->bufferPool());
-	else
-		ret = data->isp_->capture()->importBuffers(&stream->bufferPool());
+	if (streams->memoryType() == InternalMemory)
+	{
+		LOG(RPI, Error) << "exportFrameBuffers() Internal Memory";
+                ret = data->isp_->capture()->exportBuffers(&streams->bufferPool());
+	}
+        else
+	{
+		LOG(RPI, Error) << "exportFrameBuffers() External Memory";
+                ret = data->isp_->capture()->importBuffers(&streams->bufferPool());
+	}
 
 	return ret;
+
 }
 
-int PipelineHandlerRPi::freeBuffers(Camera *camera,
-				    const std::set<Stream *> &streams)
+int PipelineHandlerRPi::importFrameBuffers(Camera *camera, Stream *stream)
+{
+        RPiCameraData *data = cameraData(camera);
+        int ret;
+        unsigned int count = stream->configuration().bufferCount;
+
+
+        return data->isp_->capture()->importBuffers(&stream->bufferPool());
+}
+
+void PipelineHandlerRPi::freeFrameBuffers(Camera *camera, Stream *stream)
 {
 	RPiCameraData *data = cameraData(camera);
 	int ret;
 
 	ret = data->unicam_->releaseBuffers();
 	if (ret)
-		return ret;
+		return;
 
 	ret = data->isp_->output()->releaseBuffers();
 	if (ret)
-		return ret;
+		return;
 
 	ret = data->isp_->capture()->releaseBuffers();
 	if (ret)
-		return ret;
+		return;
 
 	data->bayerBuffers_.destroyBuffers();
 
-	return ret;
+	return;
 }
+
+#if 0
+
+int PipelineHandlerRPi::exportFrameBuffers(Camera *camera, Stream *stream,
+					      std::vector<std::unique_ptr<FrameBuffer>> *buffers)
+{
+	RPiCameraData *data = cameraData(camera);
+	const StreamConfiguration &cfg = stream->configuration();
+	int ret;
+	unsigned int count = stream->configuration().bufferCount;
+
+
+	/* Tie the unicam video buffers to the intermediate pool. */
+
+	return data->unicam_->exportBuffers(count, buffers);
+}
+
+int PipelineHandlerRPi::importFrameBuffers(Camera *camera, Stream *stream)
+{
+	RPiCameraData *data = cameraData(camera);
+	int ret;
+	unsigned int count = stream->configuration().bufferCount;
+
+
+	return data->unicam_->importBuffers(count);
+}
+
+void PipelineHandlerRPi::freeFrameBuffers(Camera *camera, Stream *stream)
+{
+	RPiCameraData *data = cameraData(camera);
+
+	data->unicam_->releaseBuffers();
+}
+
+#endif
 
 int PipelineHandlerRPi::start(Camera *camera)
 {
@@ -311,15 +378,24 @@ int PipelineHandlerRPi::start(Camera *camera)
 
 	ret = data->isp_->output()->streamOn();
 	if (ret)
+	{
+		LOG(RPI, Error) << "Failed to streamOn() for output()";
 		return ret;
+	}
 
 	ret = data->isp_->capture()->streamOn();
 	if (ret)
+	{
+		LOG(RPI, Error) << "Failed to streamOn() for capture()";
 		goto output_streamoff;
+	}
 
 	ret = data->unicam_->streamOn();
 	if (ret)
+	{
+		LOG(RPI, Error) << "Failed to streamOn for unicam";
 		goto capture_streamoff;
+	}
 
 	return 0;
 
@@ -342,19 +418,19 @@ void PipelineHandlerRPi::stop(Camera *camera)
 	data->rawBuffers_.clear();
 }
 
-int PipelineHandlerRPi::queueRequest(Camera *camera, Request *request)
+int PipelineHandlerRPi::queueRequestDevice(Camera *camera, Request *request)
 {
 	RPiCameraData *data = cameraData(camera);
 	Stream *stream = &data->stream_;
 
-	Buffer *buffer = request->findBuffer(stream);
+	FrameBuffer *buffer = request->findBuffer(stream);
 	if (!buffer) {
 		LOG(RPI, Error)
 			<< "Attempt to queue request with invalid stream";
 		return -ENOENT;
 	}
 
-	int ret = data->isp_->capture()->queueBuffer(buffer);
+	int ret = data->isp_->capture()->queueBufferrpi(buffer);
 	if (ret < 0)
 		return ret;
 
@@ -385,7 +461,7 @@ bool PipelineHandlerRPi::match(DeviceEnumerator *enumerator)
 	unicam_->acquire();
 	codec_->acquire();
 
-	std::unique_ptr<RPiCameraData> data = utils::make_unique<RPiCameraData>(this);
+	std::unique_ptr<RPiCameraData> data = std::make_unique<RPiCameraData>(this);
 
 	/* Locate and open the unicam video node. */
 	data->unicam_ = new V4L2VideoDevice(unicam_->getEntityByName("unicam"));
@@ -437,27 +513,29 @@ bool PipelineHandlerRPi::match(DeviceEnumerator *enumerator)
 	return true;
 }
 
-void RPiCameraData::sensorReady(Buffer *buffer)
+void RPiCameraData::sensorReady(FrameBuffer *buffer)
 {
+	Request *request = buffer->request();
+
 	/* \todo Handle buffer failures when state is set to BufferError. */
-	if (buffer->status() == Buffer::BufferCancelled)
+	if (buffer->status() == FrameBuffer::BufferCancelled)
 		return;
 
 	/* Deliver the frame from the sensor to the ISP. */
-	isp_->output()->queueBuffer(buffer);
+	isp_->output()->queueBufferrpi(buffer);
 }
 
-void RPiCameraData::ispOutputReady(Buffer *buffer)
+void RPiCameraData::ispOutputReady(FrameBuffer *buffer)
 {
 	/* \todo Handle buffer failures when state is set to BufferError. */
-	if (buffer->status() == Buffer::BufferCancelled)
+	if (buffer->status() == FrameBuffer::BufferCancelled)
 		return;
 
 	/* Return a completed buffer from the ISP back to the sensor. */
-	unicam_->queueBuffer(buffer);
+	unicam_->queueBufferrpi(buffer);
 }
 
-void RPiCameraData::ispCaptureReady(Buffer *buffer)
+void RPiCameraData::ispCaptureReady(FrameBuffer *buffer)
 {
 	Request *request = buffer->request();
 
@@ -510,8 +588,8 @@ void RPiCameraData::queueFrameAction(unsigned int frame,
 void RPiCameraData::metadataReady(unsigned int frame, const ControlList &metadata)
 {
 	LOG(RPI, Debug) << "Received some MetaData, but nothing I can do yet..";
-
-#if 0 // disabled cargo-cult from RkISP1
+#if 0
+	// disabled cargo-cult from RkISP1
 	PipelineHandlerRPi *pipe = static_cast<PipelineHandlerRPi *>(pipe_);
 
 	RkISP1FrameInfo *info = frameInfo_.find(frame);
@@ -526,5 +604,7 @@ void RPiCameraData::metadataReady(unsigned int frame, const ControlList &metadat
 }
 
 REGISTER_PIPELINE_HANDLER(PipelineHandlerRPi);
+
+
 
 } /* namespace libcamera */

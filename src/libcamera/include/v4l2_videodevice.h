@@ -24,6 +24,8 @@
 
 namespace libcamera {
 
+class BufferMemory;
+class BufferPool;
 class EventNotifier;
 class FileDescriptor;
 class MediaDevice;
@@ -187,7 +189,12 @@ public:
 	int importBuffers(unsigned int count);
 	int releaseBuffers();
 
+	int exportBuffers(BufferPool *pool);
+        int importBuffers(BufferPool *pool);
+
 	int queueBuffer(FrameBuffer *buffer);
+	int queueBufferrpi(FrameBuffer *buffer);
+	std::vector<std::unique_ptr<FrameBuffer>> queueAllBuffers();
 	Signal<FrameBuffer *> bufferReady;
 
 	int streamOn();
@@ -217,16 +224,24 @@ private:
 	std::vector<SizeRange> enumSizes(unsigned int pixelFormat);
 
 	int requestBuffers(unsigned int count);
+
+	int createPlane(BufferMemory *buffer, unsigned int index,
+                        unsigned int plane, unsigned int length);
+
 	std::unique_ptr<FrameBuffer> createBuffer(const struct v4l2_buffer &buf);
 	FileDescriptor exportDmabufFd(unsigned int index, unsigned int plane);
 
 	void bufferAvailable(EventNotifier *notifier);
 	FrameBuffer *dequeueBuffer();
+	FrameBuffer *dequeueBufferrpi();
 
 	V4L2Capability caps_;
 
 	enum v4l2_buf_type bufferType_;
 	enum v4l2_memory memoryType_;
+
+	bool multiPlanar_;
+	BufferPool *bufferPool_;
 
 	V4L2BufferCache *cache_;
 	std::map<unsigned int, FrameBuffer *> queuedBuffers_;
