@@ -1,5 +1,4 @@
 libcamera_sources += files([
-    'raspberrypi.cpp',
     'uvcvideo.cpp',
     'vimc.cpp',
 ])
