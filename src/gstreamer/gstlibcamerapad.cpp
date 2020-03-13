@@ -18,6 +18,7 @@ struct _GstLibcameraPad {
 	StreamRole role;
 	GstLibcameraPool *pool;
 	GQueue pending_buffers;
+	GstClockTime latency;
 };
 
 enum {
