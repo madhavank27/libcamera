@@ -100,7 +100,8 @@ int Capture::capture(EventLoop *loop, FrameBufferAllocator *allocator)
 			Stream *stream = cfg.stream();
 			const std::vector<std::unique_ptr<FrameBuffer>> &buffers =
 				allocator->buffers(stream);
-			const std::unique_ptr<FrameBuffer> &buffer = buffers[i];
+
+			std::unique_ptr<FrameBuffer> buffer = stream->createBuffer(i);
 
 			ret = request->addBuffer(stream, buffer.get());
 			if (ret < 0) {
@@ -196,6 +197,13 @@ void Capture::requestComplete(Request *request)
 	for (auto it = buffers.begin(); it != buffers.end(); ++it) {
 		Stream *stream = it->first;
 		FrameBuffer *buffer = it->second;
+		unsigned int index = buffer->index();
+
+		std::unique_ptr<FrameBuffer> newBuffer = stream->createBuffer(index);
+                if (!newBuffer) {
+                        std::cerr << "Can't create buffer " << index << std::endl;
+                        return;
+                }
 
 		request->addBuffer(stream, buffer);
 	}

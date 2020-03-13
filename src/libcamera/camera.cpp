@@ -797,6 +797,9 @@ int Camera::configure(CameraConfiguration *config)
 
 		stream->configuration_ = cfg;
 		p_->activeStreams_.insert(stream);
+
+		stream->createBuffers(cfg.memoryType, cfg.bufferCount);
+
 	}
 
 	p_->setState(Private::CameraConfigured);

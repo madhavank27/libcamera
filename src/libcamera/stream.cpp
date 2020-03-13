@@ -279,7 +279,7 @@ SizeRange StreamFormats::range(PixelFormat pixelformat) const
  * handlers provied StreamFormats.
  */
 StreamConfiguration::StreamConfiguration()
-	: pixelFormat(0), stream_(nullptr)
+	: pixelFormat(0), memoryType(InternalMemory), stream_(nullptr)
 {
 }
 
@@ -287,7 +287,7 @@ StreamConfiguration::StreamConfiguration()
  * \brief Construct a configuration with stream formats
  */
 StreamConfiguration::StreamConfiguration(const StreamFormats &formats)
-	: pixelFormat(0), stream_(nullptr), formats_(formats)
+	: pixelFormat(0), memoryType(InternalMemory), stream_(nullptr), formats_(formats)
 {
 }
 
@@ -401,6 +401,117 @@ std::string StreamConfiguration::toString() const
  */
 Stream::Stream()
 {
+}
+
+std::unique_ptr<FrameBuffer> Stream::createBuffer(unsigned int index)
+{
+        if (memoryType_ != InternalMemory) {
+                LOG(Stream, Error) << "Invalid stream memory type";
+                return nullptr;
+        }
+
+        if (index >= bufferPool_.count()) {
+                LOG(Stream, Error) << "Invalid buffer index " << index;
+                return nullptr;
+        }
+
+        FrameBuffer *buffer = new FrameBuffer();
+        buffer->index_ = index;
+        buffer->stream_ = this;
+
+        return std::unique_ptr<FrameBuffer>(buffer);
+}
+
+std::unique_ptr<FrameBuffer> Stream::createBuffer(const std::array<int, 3> &fds)
+{
+        if (memoryType_ != ExternalMemory) {
+                LOG(Stream, Error) << "Invalid stream memory type";
+                return nullptr;
+        }
+
+        FrameBuffer *buffer = new FrameBuffer();
+        buffer->dmabuf_ = fds;
+        buffer->stream_ = this;
+
+        return std::unique_ptr<FrameBuffer>(buffer);
+}
+
+
+int Stream::mapBuffer(const FrameBuffer *buffer)
+{
+        ASSERT(memoryType_ == ExternalMemory);
+
+        if (bufferCache_.empty())
+                return -ENOMEM;
+
+        const std::array<int, 3> &dmabufs = buffer->dmabufs();
+
+        /*
+         * Try to find a previously mapped buffer in the cache. If we miss, use
+         * the oldest entry in the cache.
+         */
+        auto map = std::find_if(bufferCache_.begin(), bufferCache_.end(),
+                                [&](std::pair<std::array<int, 3>, unsigned int> &entry) {
+                                        return entry.first == dmabufs;
+                                });
+        if (map == bufferCache_.end())
+                map = bufferCache_.begin();
+
+        /*
+         * Update the dmabuf file descriptors of the entry. We can't assume that
+         * identical file descriptor numbers refer to the same dmabuf object as
+         * it may have been closed and its file descriptor reused. We thus need
+         * to update the plane's internally cached mmap()ed memory.
+         */
+        unsigned int index = map->second;
+        BufferMemory *mem = &bufferPool_.buffers()[index];
+        mem->planes().clear();
+
+        for (unsigned int i = 0; i < dmabufs.size(); ++i) {
+                if (dmabufs[i] == -1)
+                        break;
+
+                mem->planes().emplace_back();
+                mem->planes().back().setDmabuf(dmabufs[i], 0);
+        }
+
+        /* Remove the buffer from the cache and return its index. */
+        bufferCache_.erase(map);
+        return index;
+}
+
+void Stream::unmapBuffer(const FrameBuffer *buffer)
+{
+        ASSERT(memoryType_ == ExternalMemory);
+
+        bufferCache_.emplace_back(buffer->dmabufs(), buffer->index());
+}
+
+void Stream::createBuffers(MemoryType memory, unsigned int count)
+{
+        destroyBuffers();
+        if (count == 0)
+                return;
+
+        memoryType_ = memory;
+        bufferPool_.createBuffers(count);
+
+        /* Streams with internal memory usage do not need buffer mapping. */
+        if (memoryType_ == InternalMemory)
+                return;
+
+        /*
+         * Prepare for buffer mapping by adding all buffer memory entries to the
+         * cache.
+         */
+        bufferCache_.clear();
+        for (unsigned int i = 0; i < bufferPool_.count(); ++i)
+                bufferCache_.emplace_back(std::array<int, 3>{ -1, -1, -1 }, i);
+}
+
+void Stream::destroyBuffers()
+{
+        bufferPool_.destroyBuffers();
 }
 
 /**
